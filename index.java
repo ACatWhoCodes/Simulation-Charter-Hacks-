@@ -3,11 +3,10 @@ import java.util.*;
 final int frame_rate = 60;
 
 // number of communities
-int num_communities = 1;
+int num_communities = 3;
 
-// confine_radius: the radius that particles have to stay within during quarantine
 // flocking_dist: distance two particles have to be within to trigger flocking
-int confine_radius = 5, flocking_dist = 50;
+int flocking_dist = 50;
 // the distance 2 particles have to be within to trigger social distancing
 float repulsion_dist = 10;
 
@@ -20,57 +19,83 @@ float infection_radius = 20;
 float infection_radius_maximum = 50;
 
 // infection_chance: chance of infection, a number from 0 to 1, on initial contact and every half second after
+// chance_of_death: chance that a particle will die rather than recover
+// chance_of_losing_immunity: chance of a particle going back to the normal, susceptible state after recovering rather than becoming immune
 float default_infection_chance = 0.2;
 float infection_chance_maximum = 1;
-float chance_of_death = 0.5;
+float chance_of_death = 0.1;
+float chance_of_losing_immunity = 0.05;
 
 boolean show_infection_radius = true;
-
-boolean socialDistancingDefault = true;
+boolean socialDistancingDefault = false;
+boolean quarantine_default = false;
+boolean haveShoppers_default = true;
 
 // list of communities containing particles
 Community[] communities;
-int communitySize = 500;
-int community_offset_y = 50;
-int community_offset_x = 100;
 
-//graph variables and array
+// community position technicalities
+int community_size = 500;
+int community_offset_y = 200;
+int community_offset_x =  100;
+int community_columns = 2;
+
+// graph variables and arrays
 int num = 50;
 int lastInfected = 0;
 int everyFrame = 100;
 int goingUp = 0;
 float[] array = new float[40];
+float[] arrayC = new float[40];
+float[] lastPoints = new float[3];
 color arr = color(255, 0, 0);
 float[] deadArray = new float[40];
 color dea = color(120);
 boolean same = false;
 boolean started = false;
 int startFrame = 0;
+float[] linRegVal = new float[40];
+color lin = color(150, 150, 0);
+float[] quadRegVal = new float [40];
+color qua = color(0, 150, 150);
+float[] expRegVal = new float[40];
+color exp = color (150, 0, 150);
+float[] time = new float[40];
+boolean reg = false;
+int timesDone = 0;
+boolean isInfection = false;
+int lastX = 0;
+int lastY = 0;
+
+// graph location, label locations, and size
+int graph_origin_x = 800;
+int graph_origin_y = 1245;
+int graph_size_y = 445;
 
 // slider techincalities
 int slider_length_y = 40;
-int slider_offset_y = 100;
-
-int lowest_edge = 0;
-int rightmost_edge = 0;
+int slider_offset_y = 120;
 
 // sliders
-Slider infectionRadius;
+VerticalSlider infectionRadius;
 Slider[] infectionChances;
 
 // toggle buttons
 toggleButton[] socialDistancingToggles;
+toggleButton[] quarantineToggles;
+toggleButton[] haveShoppers;
+
 toggleButton panningToggle;
 toggleButton startButton;
+toggleButton graphPredictions;
 
 // toggle button technicalities
 float button_offset_y = 15;
 int button_offset_x = 10;
-
 int button_size_y = 30;
-int button_size_x = 180;
+int button_size_x = 160;
 
-// zooming and panning variables
+// panning variables
 float mx,my,ratio,xpt,ypt,xzt,yzt,swt,zoom;
 
 // current relative origin: (xpt - xzt, ypt - yzt)
@@ -80,55 +105,60 @@ float mx,my,ratio,xpt,ypt,xzt,yzt,swt,zoom;
 void setup() {
   // these numbers have to be hard-coded
   // width and height is the size of the entire screen, it is automatically set after calling size
-  // size(num_communities * 600, 1500);
   size(1500, 1500);
   frameRate(frame_rate);
 
-  // setting up zooming and panning variables
+  // setting up panning variables
   zoom=1.0;
   mx=width/60;
   my=mx*height/width;
   ratio=mx/my;
 
-  
+  // constructing communities
   communities = new Community[num_communities];
+	for (int i = 0; i < num_communities; i ++) {
+    float left = 100 + community_offset_x + (community_size + community_offset_x)*(i % community_columns);
 
-  for(int i = 0; i < communities.length; i++){
-    communities[i] = new Community((int)(((communitySize*1.5)*i) + community_offset_x), (int)(((communitySize*1.5)*i + communitySize) + community_offset_x),community_offset_y,communitySize,default_infection_chance,socialDistancingDefault);
+    float bottom = -100 + community_offset_y + (community_size + community_offset_y)*(i / community_columns) - (i % community_columns)  * (community_size + community_offset_y) / community_columns;
+
+    float right = left + community_size;
+    float top = bottom + community_size;
+
+    communities[i] = new Community(left, right, bottom, top, default_infection_chance, socialDistancingDefault,quarantine_default,haveShoppers_default);
   }
 
   infectionChances = new Slider[num_communities];
 
   socialDistancingToggles = new toggleButton[num_communities];
+  quarantineToggles = new toggleButton[num_communities];
+  haveShoppers = new toggleButton[num_communities];
 
-  startButton = new toggleButton("Start Simulation",false,40,25,true,0);
-  panningToggle = new toggleButton("Panning",false,40,community_offset_y * 3 + communitySize,true,0);
+  startButton = new toggleButton("Start Simulation",false,300,300,true,0);
+  panningToggle = new toggleButton("Panning",false,0,45,true,0);
+
+  graphPredictions = new  toggleButton("Predictions",false,graph_origin_x,graph_origin_y +  20,false,20);
 
   for (int i = 0; i < communities.length; i++) {
     Community c = communities[i];
     infectionChances[i] = new Slider("Chance of Infection", c.infection_chance,
         c.community_left,c.community_right, c.community_top, infection_chance_maximum);
-    int tempY = c.community_top;
-    int tempX = c.community_right;
 
-    if (tempY > lowest_edge) {
-      lowest_edge = tempY;
-    }
+    socialDistancingToggles[i] = new toggleButton("Distancing",c.socialDistancing,c.community_left-10,c.community_top, false,20);
 
-    if (tempX > rightmost_edge) {
-      rightmost_edge = tempX;
-    }
+    quarantineToggles[i] = new toggleButton("Quarantine",c.quarantine,c.community_left + button_offset_x + button_size_x-10,c.community_top,false,20);
 
-    socialDistancingToggles[i] = new toggleButton("Social Distancing",c.socialDistancing,c.community_left,c.community_top, false,20);
+    haveShoppers[i] = new toggleButton("Shoppers",c.shopping,c.community_left + button_offset_x * 2 + button_size_x * 2-10, c.community_top,false,20);
   }
 
-  infectionRadius = new Slider("Radius of Infection", infection_radius, 100, 
-                               rightmost_edge-100,lowest_edge+slider_offset_y,infection_radius_maximum);
+  infectionRadius = new VerticalSlider("Radius of Infection", infection_radius, 100, 
+                                        610,100,infection_radius_maximum);
 
 }
 
+
 // this is called every frame
 void draw() { 
+
   background(255,239,213);
 
   if(!startButton.value){
@@ -137,7 +167,7 @@ void draw() {
   
   panningToggle.update();
 
-  // zooming and panning
+  // panning
   scale(zoom);
   translate(xpt-xzt,ypt-yzt);
 
@@ -164,43 +194,106 @@ void draw() {
       if (c.num_recovered > 0) {
         c.R0 = round(c.overall_infected/c.num_recovered*100)/100.0;
       }
-      c.num_susceptible = (int)(c.particles.size() - c.num_recovered - c.num_currently_infected + c.dead_particles.size());
       
       text("R{0} = " + c.R0, c.community_left,c.community_bottom - 5);
-      text("R = " + c.R0 * c.num_susceptible, c.community_left + 120,c.community_bottom - 5);
     }
     
-    //graph stuff
+    // graph stuff
     noFill();
-    line(600, 940, 600, 1245);
-    line(600,1245,1100,1245);
+    line(graph_origin_x, graph_origin_y-graph_size_y, graph_origin_x, graph_origin_y);
+    line(graph_origin_x,graph_origin_y,1300,graph_origin_y);
     fill(1,1,1);
-    text("300", 550, 950);
-    text("0", 575, 1250);
-    text("current", 1100, 1275);
-    text("-60", 590, 1275);
-    text("time (sec)", 825, 1300);
-    //if((frameCount - startFrame) > 2000){
-    //  if((array[39] - array[30] == 0) && (deadArray[39] - deadArray[30] == 0)){
-    //    same = true;
-    //  }
-    //}
+    text("400", 750, 810);
+    text("0", 775, 1250);
+    text("current", 1300, 1275);
+    text("-60", 790, 1275);
+    text("time (sec)", 1025, 1300);
+    noFill();
+    rect(1170, 1300, 210, 200);
+    fill(1,1,1);
+    text("Key", 1200, 1325);
+    text("Dead", 1200, 1350);
+    text("Infected", 1200, 1375);
+    text("Linear Regression", 1200, 1400);
+    text("Quadratic Regression", 1200, 1425);
+    text("Exponential Regression", 1200, 1450);
+    fill(arr);
+    ellipse(1180, 1367, 10, 10);
+    fill(dea);
+    ellipse(1180, 1342, 10, 10);
+    fill(lin);
+    ellipse(1180, 1392, 10, 10);
+    fill(qua);
+    ellipse(1180, 1417, 10, 10);
+    fill(0, 255, 255);
+    ellipse(1180, 1442, 10, 10);
+    if((frameCount - startFrame) > 2000){
+      if((array[39] - array[30] == 0) && (deadArray[39] - deadArray[30] == 0)){
+        same = true;
+      }
+    }
     if(frameCount % everyFrame == 0 && !same){
+      timesDone++;
+      arrayC = array;
+      for(int i = 0; i < array.length-1; i++){
+         linRegVal[i] = 0;
+         expRegVal[i] = 0;
+        quadRegVal[i] = 0;
+      }
+      for( int i = 0; i < lastPoints.length-1; i++){
+        for(int j = lastPoints.length; j > 0; j--){
+          lastPoints[i] = array[array.length - j];
+        }
+      }
+			int lastPoints_i = 0;
+			for (int i = array.length - lastPoints.length; i < array.length; i ++) {
+				lastPoints[lastPoints_i ++] = array[i];
+			}
+
+      float[] linReg = linearRegression(time, arrayC);
+      float linM = linReg[0];
+      float linB = linReg[1];
+      float[] expReg = expRegression(time, arrayC);
+      float expA = expReg[0];
+      float expR = expReg[1];
+      float[] quadReg = quadRegression(time, arrayC);
+      float quadA = quadReg[0];
+      float quadB = quadReg[1];
+      float quadC = quadReg[2];
       for (int i=0; i<array.length-1; i++) {
+        time[i] = time[i+1];
         array[i] = array[i+1];
         deadArray[i] = deadArray[i+1];
+        linRegVal[i] = linRegVal[i+1];
+        expRegVal[i] = expRegVal[i+1];
+        quadRegVal[i] = quadRegVal[i+1];
       }
-      float newValue = (float) total_currently_infected;
-      float newValueDead = (float) total_currently_dead;
+      array[array.length-1] = (float) total_currently_infected;
+      deadArray[array.length-1] = (float) total_currently_dead;
+      time[time.length-1] = millis()/1000;
+      for (int i=0; i < 40; i++){
+        if((frameCount - startFrame) > 100){
+          linRegVal[i] = (linM * time[i]) + linB;
+          //expRegVal[i] = (expA*(pow(expR, time[i])));
+          quadRegVal[i] = (quadA*pow(time[i], 2)) + (quadB * time[i]) + quadC;
+        }
+      }
 
-      array[array.length-1] = newValue;
-      deadArray[array.length-1] = newValueDead;
     }
-    //if(same){
-      //text("Graph is now constant, Graph updates have ceased ", 700, 900);
-    //}
+    if(same){
+      text("Graph is now constant, Graph updates have ceased ", 1000, 900);
+    }
+    isInfection = true;
     graphing(array, arr);
+    isInfection = false;
     graphing(deadArray, dea);
+    reg = true;
+    if(graphPredictions.value){
+      graphing(linRegVal, lin);
+      graphing(quadRegVal, qua);
+    }
+
+    reg = false;
     
     fill(0,0,0);
     text("Current Infected: " + (int) total_currently_infected, 800, 850+500);
@@ -211,30 +304,84 @@ void draw() {
   infectionRadius.update();
   infection_radius = infectionRadius.get();
 
+  graphPredictions.update();
+
   for(int i = 0; i < communities.length; i++){
     infectionChances[i].update();
-    socialDistancingToggles[i].update();
     communities[i].infection_chance = infectionChances[i].get();
-    communities[i].socialDistancing = socialDistancingToggles[i].value;
-  }
-}
-/*
 
+    socialDistancingToggles[i].update();
+    communities[i].socialDistancing = socialDistancingToggles[i].value;
+
+    haveShoppers[i].update();
+    communities[i].shopping = haveShoppers[i].value;
+
+    boolean prevQuarVal = quarantineToggles[i].value;
+    quarantineToggles[i].update();
+    communities[i].quarantine = quarantineToggles[i].value;
+    if (!prevQuarVal && quarantineToggles[i].value) {
+      communities[i].quarantine_distancing = true;
+    }
+  }
+	projectionLinear(lastX, lastY);
+	projectionExponential(lastX, lastY);
+	projectionQuad(lastX, lastY);
+}
+
+// returns the linear equation of best fit in the form of y = m * x + b
+// returns m and b in an array of float
+// (time, infection number)
+// x = {times}
+// y = {infection numbers}
+float[] linearRegression(float[] x, float[] y) {
+	float n = x.length;
+	float Ex = 0, Ey = 0, xy = 0, x2 = 0;
+	for (int i = 0; i < n; i ++) {
+		Ex += x[i];
+		Ey += y[i];
+		xy += x[i] * y[i];
+		x2 += x[i] * x[i];
+	}
+	float m = (n * xy - Ex * Ey) / ((n * x2) - Ex * Ex);
+	float b = (Ey - m * Ex) / n;
+	return new float[] {m, b};
+}
+
+// returns equation in the form y = A * r ^ x
+float[] expRegression(float[] x, float[] yy) {
+	float y[] = new float[yy.length];
+	for (int i = 0; i < yy.length; i ++) y[i] = yy[i];
+	for (int i = 0; i < x.length; i ++) y[i] = (float) Math.log10(y[i]);
+	float[] linear = linearRegression(x, y);
+	float r = (float) Math.pow(10, linear[0]);
+	float A = (float) Math.pow(10, linear[1]);
+	return new float[] {A, r};
+}
+
+// accepts some previous points (x, y) and outputs the best fit quadratic function to predict future
+// in the form of a * x ^ 2 + b * x + c
 float[] quadRegression(float[] x, float[] y) {
-	n = x.length;
+	float n = x.length;
 	float Ex = 0, Ey = 0, Ex2 = 0, Ex3 = 0, Ex4 = 0, Exy = 0, Ex2y = 0;
 	for (int i = 0; i < n; i ++) {
 		Ex += x[i];
 		Ey += y[i];
-		Ex2 += Math.pow(x[i], 2);
+		Ex2 += x[i] * x[i];
 		Ex3 += Math.pow(x[i], 3);
 		Ex4 += Math.pow(x[i], 4);
 		Exy += x[i] * y[i];
 		Ex2y += x[i] * x[i] * y[i];
 	}
-
+	float Exx = Ex2 - Ex * Ex / n;
+	Exy = Exy - Ex * Ey / n;
+	float Exx2 = Ex3 - Ex2 * Ex / n;
+	Ex2y = Ex2y - Ex2 * Ey / n;
+	float Ex2x2 = Ex4 - Ex2 * Ex2 / n;
+	float a = (Ex2y * Exx - Exy * Exx2) / (Exx * Ex2x2 - Exx2 * Exx2);
+	float b = (Exy * Ex2x2 - Ex2y * Exx2) / (Exx * Ex2x2 - Exx2 * Exx2);
+	float c = Ey / n - b * Ex / n - a * Ex2 / n;
+	return new float[] {a, b, c};
 }
-*/
 
 // handling panning 
 void mouseDragged() {
@@ -277,18 +424,19 @@ void keyPressed() {
 
 class Community {
   float infection_chance, overall_infected, num_recovered, R0;
-  boolean socialDistancing;
+  boolean socialDistancing, quarantine, quarantine_distancing, shopping;
 
   // num_centers: number of party centers
   int num_centers = 2, num_currently_infected;
 
-  // starting amount of particles
-  int default_num_particles = 100, num_susceptible;
+  // default_num_particles: starting amount of particles
+  // quar_distancing_frames: used to keep track of how long a community has been quarantining for
+  int default_num_particles = 100, quar_distancing_frames;
   // locations of the left and right and top and bottom of the community
   // note that process uses a different coordinate system
   // so (0, 0) is the top left corner
   // which mean that community_top will refer to the 
-  int community_left, community_right, community_top, community_bottom;
+  float community_left, community_right, community_top, community_bottom;
 
   ArrayList<Particle> particles;
   ArrayList<Particle> dead_particles;
@@ -298,9 +446,14 @@ class Community {
   // location of centers
   PVector[] centers;
 
-  Community(int com_left, int com_right, int com_bot, int com_top, float infect_chance, boolean socialDistancing) {
+  Community(float com_left, float com_right, float com_bot, float com_top, float infect_chance, boolean socialDistancing, boolean quarantine, boolean isShopping) {
     infection_chance=infect_chance;
     this.socialDistancing = socialDistancing;
+    this.quarantine = quarantine;
+    quarantine_distancing = quarantine;
+    shopping = isShopping;
+
+    quar_distancing_frames = 0;
     num_recovered = 0;
     overall_infected = 0;
     R0 = 0;
@@ -322,11 +475,20 @@ class Community {
     particles.get((int) random(particles.size())).state = 1;
   }
 
+  void startGathering() {
+    for(int i = 0; i < particles.size()/8; i++) {
+      Particle p = particles.get((int) random(particles.size()));
+      if (!p.gatherer && !p.shopper && !p.adventurer) {
+        p.makeGatherer();
+      }
+    }
+  }
+
   void socialDistance(int i, int j) {
     // the difference vector between the 2 particles
     PVector diff = PVector.sub(particles.get(i).pos, particles.get(j).pos);
     // scale the vector so the attraction force is the same every time
-    diff.normalize(); diff.div(10);
+    diff.normalize(); diff.div(2);
 
     // give particle i a little push away from particle j
     particles.get(i).applyForce(diff);
@@ -357,10 +519,20 @@ class Community {
         Particle p2 = particles.get(j);
         // distance between person i and j
         float dis = p1.pos.dist(p2.pos);
+        
         // social distance (not perfect since irl it isn't strictly enforced)
-        if (socialDistancing && dis < particle_radius * 2 + repulsion_dist) {
+        if ((socialDistancing || quarantine_distancing) && dis < particle_radius * 2 + repulsion_dist) {
           socialDistance(i, j);
         }
+        
+        if (quarantine_distancing && i == particles.size()-1 && j == i-1) {
+          quar_distancing_frames++;
+          if (quar_distancing_frames > 60) {
+            quarantine_distancing = false;
+            quar_distancing_frames = 0;
+          }
+        }
+
         // flocking
         // if both gatherers and close enough
         else if (p1.gatherer && p2.gatherer && dis < flocking_dist) {  
@@ -401,7 +573,7 @@ class Community {
               }
               else p2.infect(p1);
             }
-            // adds particle to recentInfectFails if infection fails
+            // adds particle to recent_infect_fails if infection fails
             else p1.recent_infect_fails.put(p2, 0);
           }
         }
@@ -423,6 +595,10 @@ class Community {
       ellipse(p.x, p.y, center_radius, center_radius);
     }
 
+    if (!quarantine && random(0, 1) < 0.002) {
+      startGathering();
+    }
+
     stroke(1);
     num_currently_infected = 0;
     for (int i = 0; i < particles.size(); i ++) {
@@ -440,10 +616,11 @@ class Community {
       if (particles.get(i).traveller && particles.get(i).pos.dist(particles.get(i).target_location) < 10) {
         particles.get(i).traveller = false; 
         particles.get(i).init_pos = particles.get(i).pos.get();
+        particles.get(i).vel.mult(0);
         
-        if (particles.get(i).to_community != particles.get(i).community) {
+        if (particles.get(i).adventurer == true) {
+           particles.get(i).adventurer = false;
            Community second = particles.get(i).to_community; 
-           
            particles.get(i).community = second;
            second.particles.add(particles.get(i));
            particles.get(i).recent_infect_fails.clear();
@@ -472,10 +649,10 @@ class Particle {
   // traveller: a person who travels from one community to another
   // self_isolation: an infected person realizes it and stays in one place
   // debug: special treatment for particles that needs debugging
-  boolean partier, gatherer, traveller, self_isolation, debug;
+  boolean shopper, gatherer, traveller, adventurer, self_isolation, debug;
   // state: 0 is susceptible, 1 is infected, 2 is recoverd
   // infected_time: time elapsed since initially infected
-  int state, infected_time, num_infected;
+  int state, infected_time, num_infected, gatherer_time;
 
   // community: the community it belongs to
   // to_community: the community it is travelling to if it is a traveller
@@ -491,15 +668,9 @@ class Particle {
     vel.mult(10);
     acc = new PVector(0, 0);
     state = 0;
+    adventurer = false;
     infected_time = -1;
     recent_infect_fails = new HashMap<Particle, Integer>();
-
-    // chance of a person being a partier
-    if (random(0, 1) < 0.05) {
-      partier = true;
-      selectCenter();
-    }
-    else if (random(0, 1) < 0.3) gatherer = true;
   }
 
   void infect(Particle p) {
@@ -512,8 +683,11 @@ class Particle {
     if(random(0, 1) > 0.02) return;
     
     Community dest = community;
-    if(random(0, 1) < 0.3) {
-      dest = communities[(int) random(num_communities)];
+    if(num_communities > 1 && random(0, 1) < 0.008) {
+      while (dest == community) {
+        dest = communities[(int) random(num_communities)]; 
+      }
+      adventurer = true;
     }
     
     this.traveller = true;
@@ -526,6 +700,17 @@ class Particle {
       target_center = community.centers[(int) random(community.num_centers)];
       target_location = target_center;
   }
+
+  void makeShopper() {
+    shopper = true;
+    selectCenter();
+  }
+
+  void makeGatherer() {
+    gatherer = true;
+    gatherer_time = 0;
+  }
+
   void applyForce(PVector f) { 
     acc.add(f);
   } 
@@ -545,11 +730,13 @@ class Particle {
   }
 
   // people go to parties
-  void party() {
+  void shop() {
     boolean forth = target_location == target_center;
     // people gather at a central location like a party
     if (forth && pos.dist(target_center) < 5) target_location = init_pos;
-    else if (!forth && pos.dist(init_pos) < 5) target_location = target_center;
+    else if (!forth && pos.dist(init_pos) < 5) {
+      shopper = false;
+    }
     goTo(3);
   }
 
@@ -562,15 +749,6 @@ class Particle {
       vel.y *= -1;
     }
 
-    // confined space cuz of quarantine
-    if (!partier && !gatherer) {
-      if (confine_radius < pos.dist(init_pos)) {
-        PVector d = PVector.sub(pos, init_pos);
-        d.limit(confine_radius);
-        pos = PVector.add(init_pos, d);
-      }
-    }
-
     // do not glitch out of bounds, sometimes the physics gets wacky
     pos.x = max(community.community_left + particle_radius, pos.x); pos.x = min(community.community_right - particle_radius, pos.x);
     pos.y = max(community.community_bottom + particle_radius, pos.y); pos.y = min(community.community_top - particle_radius, pos.y);
@@ -580,24 +758,44 @@ class Particle {
   // things related to changes to the position, velocity or acceleration of the particles
   void updatePosition() {
     // people move around randomly
-    if(!gatherer && !partier) {
+    if(!community.quarantine && !gatherer && !shopper && !adventurer) {
       randomMove();
     }
-    
-    // if (random(0, 1) < 0.0001) println(vel);
-    slowDown();
-    if (partier) {
-      party();
+    else if (!community.quarantine_distancing && traveller && community.quarantine && !adventurer) {
+      vel.mult(0);
     }
-    if (traveller) goTo(0.05);
+    
+    slowDown();
+    if (shopper) {
+      shop();
+    }
+    if (traveller) {
+      goTo(0.05);
+    }
     vel.add(acc);
     pos.add(vel);
     acc.mult(0);
-    if (!traveller) bounds();
+    if (!adventurer) bounds();
   }
 
   // this is the function being called every frame
   void nextFrame() {
+    if (community.shopping && !gatherer && !adventurer && random(0, 1) < 0.001) {
+      if (!community.quarantine) {
+        makeShopper();
+      }
+      else if (random(0, 1) < 0.2) {
+        makeShopper();
+      }
+    }
+
+    if (gatherer) {
+      gatherer_time++;
+      if (gatherer_time > frame_rate * 3.5) {
+        gatherer = false;
+      }
+    }
+
     if (state != 3) {
       updatePosition();
     }
@@ -623,6 +821,9 @@ class Particle {
           state = 3;
           community.dead_particles.add(this);
         }
+        else if (random(1) < chance_of_losing_immunity) {
+			  	state = 0;
+		  	}
         else {
           state = 2;
         }
@@ -664,7 +865,7 @@ class toggleButton{
   int radius;
   int transparency = 0;
 
-  public toggleButton(String thingToggled, boolean value, int left, int bottom, boolean sidebar, int r){
+  public toggleButton(String thingToggled, boolean value, float left, float bottom, boolean sidebar, int r){
     this.value = value;
     left_bound = left;
     bottom_bound = bottom;
@@ -725,10 +926,10 @@ void graphing(float[] graphingArray, color graphColor) {
   int num = 50;
   int everyFrame = 100;
   int goingUp = 0;
-  int tempX = 600;
+  int tempX = 800;
 
     for (int i = 0; i < graphingArray.length; i++) {
-      int currX = ((width/2)*i/graphingArray.length+(width/2)/num)*(2/3)+600;
+      int currX = ((width/2)*i/graphingArray.length+(width/2)/num)*(2/3)+800;
       int currY = (int)(height/2-graphingArray[i]+495);
     
       fill(150);
@@ -750,36 +951,90 @@ void graphing(float[] graphingArray, color graphColor) {
         }
         else{
           if(goingUp != 2){
-            curveTightness(-2);
+            curveTightness(2);
             goingUp = 2;
           }
           else{
-            curveTightness(-1);
+            curveTightness(1);
           }
         }
-        stroke(graphColor, 100);
-        fill(graphColor, 100);
-        quad(tempX, (height/2)-graphingArray[i-1]+495, currX, currY, currX,  1245, tempX, 1245);
-        strokeWeight(4);
-        stroke(graphColor);
-        curve(currX, (height/2)-graphingArray[i-1]+495, tempX, (height/2)-graphingArray[i-1]+495, currX, currY, currX, (height/2)-graphingArray[i-1]+495);
-        strokeWeight(1);
-        stroke(0);
-        fill(0);
-        ellipse(currX, currY, 5, 5);
+        if (!reg || i > 40 - timesDone){
+          stroke(graphColor, 100);
+          fill(graphColor, 100);
+          quad(tempX, (height/2)-graphingArray[i-1]+495, currX, currY, currX,  1245, tempX, 1245);
+          strokeWeight(4);
+          stroke(graphColor);
+          curve(currX, (height/2)-graphingArray[i-1]+495, tempX, (height/2)-graphingArray[i-1]+495, currX, currY, currX, (height/2)-graphingArray[i-1]+495);
+          strokeWeight(1);
+          stroke(0);
+          fill(0);
+          ellipse(currX, currY, 5, 5);
+          if (i == 39 && isInfection){
+              lastX = currX;
+              lastY = currY;
+            }
+          }
         tempX = currX;
         }
   }
 }
 
+void projectionLinear(int x_offset, int y_offset) {
+	float[] x = new float[lastPoints.length];
+	for (int i = 0; i < lastPoints.length; i ++) {
+		x[i] = 20 * i;
+	}
+	float[] res = linearRegression(x, lastPoints);
+	float m = res[0], b = res[1];
+	stroke(0, 100, 100);
+	strokeWeight(1);
+	float xloc = 200;
+	float yloc = m * xloc;
+	line(x_offset, y_offset, xloc + x_offset, -yloc + y_offset);
+}
+
+
+void projectionExponential(int x_offset, int y_offset) {
+	float[] x = new float[lastPoints.length];
+	for (int i = 0; i < lastPoints.length; i ++) {
+		x[i] = 20 * i;
+	}
+	float[] res = expRegression(x, lastPoints);
+	float A = res[0], r = res[1];
+	strokeWeight(1);
+	float xstart = 0;
+	float ydiff = A * pow(r, xstart);
+	for (float xloc = xstart; xloc < 200; xloc ++) {
+		stroke(0, 255, 255);
+		float yloc = A * pow(r, xloc);
+		ellipse(x_offset + xloc, -yloc + y_offset + ydiff, 1, 1);
+	}
+}
+
+void projectionQuad(int x_offset, int y_offset) {
+	float[] x = new float[lastPoints.length];
+	for (int i = 0; i < lastPoints.length; i ++) {
+		x[i] = 20 * i;
+	}
+	float[] res = quadRegression(x, lastPoints);
+	float a = res[0], b = res[1], c = res[2];
+	strokeWeight(1);
+	stroke(255, 100, 0);
+	float xstart = 0;
+	for (float xloc = xstart; xloc < 200; xloc ++) {
+		float yloc = a * xloc * xloc + b * xloc;
+		ellipse(x_offset + xloc, -yloc + y_offset, 1, 1);
+	}
+}
+
 class Slider {
-  private float value;
-  int leftBound, rightBound, topBound;
+  float value;
+  float leftBound, rightBound, topBound;
   float currentPos;
   float maximum;
   String thing_controlled;
 
-  public Slider(String type, float value, int left, int right, int top, float max){
+  public Slider(String type, float value, float left, float right, float top, float max){
     this.value = value;
     leftBound = left + 20;
     rightBound = right - 20;
@@ -794,18 +1049,23 @@ class Slider {
   }
 
   void update(){
-    stroke(0,0,255);
     strokeWeight(3);
-    fill(0,0,0);
     textFont(createFont("Times New Roman",20));
+    textAlign(LEFT);
 
-    //baseline
-    line(leftBound,topBound+slider_offset_y,rightBound,topBound+slider_offset_y);
-
-    //dynamic line
     float sliderTop = topBound + slider_offset_y - slider_length_y/2;
     float sliderBottom = topBound + slider_offset_y + slider_length_y/2;
 
+    // baselines
+    stroke(0,0,0);
+    line(leftBound,topBound+slider_offset_y,rightBound,topBound+slider_offset_y);
+    line(leftBound,sliderTop,leftBound,sliderBottom);
+    line(rightBound,sliderTop,rightBound,sliderBottom);
+
+    // dynamic line
+    stroke(0,0,255);
+
+    // checks whether mouse in range of slider
     boolean mouseInYRange = mouseY >= sliderTop + ypt - yzt && mouseY <= sliderBottom + ypt - yzt;
     boolean mouseInXRange = mouseX >= leftBound - 25 + xpt - xzt && mouseX <= rightBound + 25 + xpt - xzt;
 
@@ -819,35 +1079,41 @@ class Slider {
       currentPos = mouseX - (xpt - xzt);
     }
 
-    line(currentPos,sliderTop,currentPos,sliderBottom);
+    fill(0,128,255);
+    stroke(0,0,255);
+    ellipse(currentPos,sliderTop + slider_length_y/2,20,20);
 
     value = (currentPos-leftBound) * maximum/(rightBound - leftBound);
-    text(thing_controlled+": "+value,leftBound,sliderTop - 10);
+
+    fill(0,0,0);
+    text(thing_controlled+": "+value,leftBound + 20,sliderTop - 10);
   }
 }
 
-/*
 class VerticalSlider extends Slider{
-   public verticalSlider(String type, float value, int left, int right, int top, float max){
-     super(type,value,left,right,top,max);
+  public VerticalSlider(String type, float value, int top, int bottom, int right, float max){
+    super(type,value,top,bottom,right,max);
   }
 
-   @Override
-   void update(){
-     stroke(0,0,255);
-     strokeWeight(3);
-     fill(0,0,0);
+  void update(){
+    strokeWeight(3);
     textFont(createFont("Times New Roman",20));
+    textAlign(CENTER);
+    
+    float sliderTop = topBound + slider_length_y/2;
+    float sliderBottom = topBound - slider_length_y/2;
 
-    //baseline
-     line(leftBound,topBound+slider_offset_y,rightBound,topBound+slider_offset_y);
+    // baselines
+    stroke(0,0,0);
+    line(topBound,leftBound,topBound,rightBound);
 
-    //dynamic line
-    float sliderTop = topBound + slider_offset_y - slider_length_y/2;
-    float sliderBottom = topBound + slider_offset_y + slider_length_y/2;
+    // dynamic line
+    line(sliderBottom,leftBound,sliderTop,leftBound);
+    line(sliderBottom,rightBound,sliderTop,rightBound);
 
-    boolean mouseInYRange = mouseY >= sliderTop + ypt - yzt && mouseY <= sliderBottom + ypt - yzt;
-    boolean mouseInXRange = mouseX >= leftBound - 25 + xpt - xzt && mouseX <= rightBound + 25 + xpt - xzt;
+    // checks whether mouse in range of slider
+    boolean mouseInXRange = mouseX >= sliderBottom + xpt - xzt && mouseX <= sliderTop + xpt - xzt;
+    boolean mouseInYRange = mouseY >= leftBound - 25 + ypt - yzt && mouseY <= rightBound + 25 + ypt - yzt;
 
     if(mouseInYRange && mouseInXRange && mousePressed && !panningToggle.value){
       if(mouseY > rightBound + ypt - yzt){
@@ -859,9 +1125,12 @@ class VerticalSlider extends Slider{
        currentPos = mouseY - (ypt - yzt);
     }
 
-     line(sliderTop,currentPos,sliderBottom,currentPos);
-     value = (currentPos-leftBound) * maximum/(rightBound - leftBound);
-     text(thing_controlled+": "+value,leftBound,sliderTop - 10);
+    fill(0,128,255);
+    stroke(0,0,255);
+    ellipse(sliderBottom + slider_length_y/2,currentPos,20,20);
+    
+    value = (currentPos-leftBound) * maximum/(rightBound - leftBound);
+    fill(0,0,0);
+    text(thing_controlled+": "+value, topBound, leftBound - 10);
   }
 }
-*/
